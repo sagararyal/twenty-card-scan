@@ -1,0 +1,589 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="referrer" content="no-referrer">
+<title>Card Scan camera</title>
+<!-- Card Scan camera page. A plain web page on its own address, because Twenty's app pages
+     cannot use the camera. Opened from Scan business cards in Twenty with ?api=<Twenty URL>&code=<session code>.
+     It sends each card to that Twenty's Card Scan routes and nothing else. -->
+<style>
+  :root { color-scheme: dark; --bg: #111111; --text: #ffffff; --muted: #d9d9d9; --line: rgba(255,255,255,.16);
+    --accent: #3b5bdb; --ok: #3fb37f; --warn: #e0a33b; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font-family: Inter, -apple-system, system-ui, sans-serif; font-size: 15px; -webkit-tap-highlight-color: transparent; }
+  .app { position: fixed; inset: 0; display: flex; flex-direction: column; }
+  button { font: inherit; color: inherit; border: 0; background: transparent; cursor: pointer; }
+  button:disabled { opacity: .4; cursor: default; }
+  button:focus-visible, input:focus-visible { outline: 2px solid #8da2fb; outline-offset: 2px; }
+
+  /* Top: Done, title with the count, Auto */
+  .top { padding: calc(env(safe-area-inset-top) + 6px) 8px 8px; display: grid; grid-template-columns: 76px 1fr 76px;
+    align-items: center; z-index: 2; background: var(--bg); }
+  .top .done { height: 44px; padding: 0 8px; justify-self: start; font-weight: 500; color: var(--muted); }
+  .title { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 0; }
+  .title b { font-weight: 600; }
+  .count { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
+    font-variant-numeric: tabular-nums; min-height: 15px; }
+  .mode { justify-self: end; height: 32px; padding: 0 12px; border-radius: 999px; background: rgba(255,255,255,.12);
+    font-size: 13px; font-weight: 500; white-space: nowrap; }
+  .mode.on { background: var(--ok); }
+
+  /* List: one quiet field under the title */
+  .list { padding: 0 16px 10px; background: var(--bg); z-index: 2; }
+  .list label { display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 12px; border-radius: 10px;
+    background: rgba(255,255,255,.08); color: var(--muted); font-size: 13px; }
+  .list input { flex: 1; min-width: 0; font: inherit; font-size: 16px; color: var(--text); background: transparent; border: 0; outline: none; }
+  .list input::placeholder { color: #8a8a8a; }
+  .lists { display: flex; align-items: center; gap: 8px; }
+  .chips { flex: 1; min-width: 0; display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+  .chips::-webkit-scrollbar { display: none; }
+  .chip { flex-shrink: 0; height: 32px; padding: 0 12px; border-radius: 999px; border: 1px solid rgba(255,255,255,.18);
+    color: var(--muted); font-size: 13px; display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 500; }
+  .chip.add { color: #9a9a9a; border-style: dashed; }
+  .round { flex-shrink: 0; width: 32px; height: 32px; border-radius: 999px; background: rgba(255,255,255,.12);
+    display: flex; align-items: center; justify-content: center; }
+  .viewbtn { position: absolute; top: 12px; height: 40px; border-radius: 999px; background: rgba(0,0,0,.5);
+    display: flex; align-items: center; justify-content: center; z-index: 1; }
+  .flipbtn { right: 12px; width: 40px; }
+  .flipbtn[hidden], .ocrpill[hidden], .zoom[hidden] { display: none; }
+  .ocrpill { left: 12px; padding: 0 12px; gap: 6px; color: #f5c542; font-size: 13px; font-weight: 600; }
+  .zoom { position: absolute; left: 0; right: 0; bottom: 14px; display: flex; justify-content: center; align-items: center; gap: 8px; z-index: 1; }
+  .zoom button { width: 30px; height: 30px; border-radius: 50%; background: rgba(0,0,0,.35); font-size: 11px; font-weight: 600; }
+  .zoom button[aria-pressed="true"] { width: 36px; height: 36px; background: rgba(0,0,0,.6); color: #f5c542; font-size: 12px; }
+  .thumb.held { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px rgba(255,255,255,.85); }
+  .backdrop { position: fixed; inset: 0; z-index: 6; background: rgba(0,0,0,.55); display: flex; align-items: flex-end; }
+  .backdrop[hidden] { display: none; }
+  .panel { width: 100%; max-height: 75vh; background: #1c1c1e; border-radius: 16px 16px 0 0; display: flex; flex-direction: column;
+    padding-bottom: env(safe-area-inset-bottom); }
+  .panel header { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px 10px; }
+  .panel header b { font-weight: 600; }
+  .panel .link { height: 36px; padding: 0 4px; color: #8da2fb; font-weight: 600; }
+  .search { margin: 0 16px 10px; display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 12px; border-radius: 10px;
+    background: rgba(255,255,255,.08); color: #9a9a9a; }
+  .search input { flex: 1; min-width: 0; font: inherit; font-size: 16px; color: #fff; background: transparent; border: 0; outline: none; }
+  .options { overflow-y: auto; }
+  .option { display: flex; align-items: center; justify-content: space-between; width: 100%; min-height: 48px; padding: 0 16px;
+    border-top: 1px solid rgba(255,255,255,.08); text-align: left; }
+  .option svg { visibility: hidden; }
+  .option[aria-selected="true"] svg { visibility: visible; }
+  .panel footer { padding: 10px 16px 18px; font-size: 12px; color: #9a9a9a; border-top: 1px solid rgba(255,255,255,.08); }
+  .info { padding: 6px 20px 22px; display: flex; flex-direction: column; gap: 12px; line-height: 1.45; font-size: 14px; color: #d4d4d6; }
+  .info p, .info ul { margin: 0; }
+  .info ul { padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }
+  .info .ask { padding: 12px 14px; border-radius: 10px; background: rgba(59,91,219,.18); color: #fff; }
+
+  /* Camera */
+  .view { position: relative; flex: 1; overflow: hidden; background: #000; }
+  video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .frame { position: absolute; left: 6%; right: 6%; top: 50%; transform: translateY(-50%);
+    aspect-ratio: 1.75; border: 2px solid rgba(255,255,255,.9); border-radius: 12px;
+    box-shadow: 0 0 0 9999px rgba(0,0,0,.45); pointer-events: none; transition: border-color .15s; }
+  .frame.ready { border-color: var(--ok); }
+  .frame.steady { border-color: var(--warn); }
+  .hint { position: absolute; left: 24px; right: 24px; top: calc(50% + 25vw + 18px); text-align: center; font-size: 14px;
+    color: var(--muted); pointer-events: none; line-height: 1.4; }
+  .flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; transition: opacity .18s; }
+  .flash.on { opacity: .7; transition: none; }
+
+  /* Bottom: last card, shutter, back side */
+  .bar { padding: 16px 28px calc(env(safe-area-inset-bottom) + 20px); display: grid;
+    grid-template-columns: 1fr auto 1fr; align-items: center; background: var(--bg); }
+  .current { display: flex; gap: 4px; align-items: center; min-height: 44px; }
+  .current:empty::before { content: ""; width: 44px; height: 44px; border-radius: 8px; background: #2a2a2a; }
+  .thumb { position: relative; width: 44px; height: 44px; border-radius: 8px; overflow: hidden; background: #2a2a2a; }
+  .thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .thumb span { position: absolute; right: 2px; bottom: 2px; font-size: 9px; font-weight: 600; background: rgba(0,0,0,.7);
+    padding: 0 3px; border-radius: 3px; }
+  .center { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .shutter { width: 72px; height: 72px; border-radius: 50%; border: 4px solid #fff; padding: 4px; }
+  .shutter i { display: block; width: 100%; height: 100%; border-radius: 50%; background: #fff; transition: transform .08s; }
+  .shutter:active i { transform: scale(.9); }
+  .side { justify-self: end; }
+  .btn { height: 44px; padding: 0 14px; border-radius: 10px; background: rgba(255,255,255,.12); font-size: 14px; font-weight: 500; }
+  .btn.primary { background: var(--accent); }
+
+  .msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 32px;
+    text-align: center; line-height: 1.5; background: var(--bg); color: var(--muted); z-index: 3; }
+  .msg[hidden] { display: none; }
+  .toast { position: fixed; left: 50%; top: calc(env(safe-area-inset-top) + 112px); transform: translateX(-50%);
+    background: rgba(40,40,40,.96); padding: 8px 14px; border-radius: 999px; font-size: 13px; z-index: 4; opacity: 0;
+    transition: opacity .25s; white-space: nowrap; }
+  .toast.on { opacity: 1; }
+
+  .intro { position: fixed; inset: 0; z-index: 5; display: flex; align-items: flex-end; justify-content: center;
+    background: rgba(0,0,0,.6); padding: 16px 16px calc(env(safe-area-inset-bottom) + 16px); }
+  .intro[hidden] { display: none; }
+  .sheet { width: 100%; max-width: 440px; background: #1c1c1e; border-radius: 16px; padding: 20px;
+    display: flex; flex-direction: column; gap: 12px; line-height: 1.45; }
+  .sheet h1 { margin: 0; font-size: 17px; font-weight: 600; }
+  .sheet p { margin: 0; font-size: 14px; color: #d4d4d6; }
+  .sheet b { color: #fff; font-weight: 500; }
+  .sheet .row { display: flex; gap: 8px; margin-top: 4px; }
+  .sheet .row .btn { flex: 1; }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="top">
+    <button class="done" id="done">Done</button>
+    <div class="title"><b>Scan card</b><span class="count" id="count" aria-live="polite"></span></div>
+    <button class="mode" id="mode" aria-pressed="false" title="Take each card by itself when it is sharp and still">Auto off</button>
+  </div>
+  <div class="list">
+    <div class="lists">
+      <div class="chips" id="chips" role="group" aria-label="Add to lists"></div>
+      <button class="round" id="allLists" aria-label="All lists"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg></button>
+    </div>
+  </div>
+  <div class="view">
+    <video id="video" playsinline autoplay muted></video>
+    <div class="frame" aria-hidden="true"></div>
+    <button class="viewbtn ocrpill" id="ocrPill" hidden aria-label="OCR only. What this means"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 7V4h3M17 4h3v3M20 17v3h-3M7 20H4v-3M8 9h8M8 12h8M8 15h5"/></svg>OCR only</button>
+    <button class="viewbtn flipbtn" id="flip" hidden aria-label="Switch camera"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 7h3l2-3h8l2 3h3v12H3z"/><path d="M9.5 13a2.5 2.5 0 0 1 4.6-1.3M14.5 13a2.5 2.5 0 0 1-4.6 1.3"/></svg></button>
+    <div class="zoom" id="zoom" role="group" aria-label="Zoom" hidden></div>
+    <div class="hint" id="hint">Hold the card inside the frame</div>
+    <div class="flash" id="flash"></div>
+    <div class="msg" id="msg" hidden></div>
+  </div>
+  <div class="bar">
+    <div class="current" id="current" aria-live="polite"></div>
+    <div class="center">
+      <button class="shutter" id="shutter" aria-label="Take photo"><i></i></button>
+    </div>
+    <div class="side">
+      <button class="btn" id="back" disabled>Add back</button>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<div class="backdrop" id="listSheet" hidden>
+  <div class="panel" role="dialog" aria-modal="true" aria-labelledby="listTitle">
+    <header><b id="listTitle">Add to lists</b><button class="link" id="listDone">Done</button></header>
+    <label class="search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="listSearch" placeholder="Search or name a new list" autocomplete="off" aria-label="Search or name a new list"></label>
+    <div class="options" id="listOptions" role="listbox" aria-multiselectable="true" aria-label="Lists"></div>
+    <footer id="listFooter"></footer>
+  </div>
+</div>
+<div class="backdrop" id="ocrSheet" hidden>
+  <div class="panel" role="dialog" aria-modal="true" aria-labelledby="ocrTitle">
+    <header><b id="ocrTitle">OCR only</b></header>
+    <div class="info">
+      <p>Your CRM has no AI model turned on, so cards are read on this phone instead.</p>
+      <ul>
+        <li>Emails, phone numbers and websites are found for you</li>
+        <li>Name, job title and company you fill in during review. The card's other lines are in the note</li>
+        <li>Small or styled print can be missed</li>
+        <li>No crop, no website lookup, no auto-save</li>
+      </ul>
+      <p class="ask">For a full read, ask your CRM admin to turn on an AI model in Twenty's settings.</p>
+      <button class="btn primary" id="ocrOk">Got it</button>
+    </div>
+  </div>
+</div>
+<div class="intro" id="intro" hidden role="dialog" aria-modal="true" aria-labelledby="introTitle">
+  <div class="sheet">
+    <h1 id="introTitle">Card Scan camera</h1>
+    <p>This page is Card Scan's camera. Your photos go straight from this device to your Twenty at <b id="introApi"></b>. This site never receives them.</p>
+    <p>Your browser will now ask to use the camera for <b id="introHost"></b>. Allow it to start scanning.</p>
+    <div class="row">
+      <button class="btn" id="introNever">Don't show again</button>
+      <button class="btn primary" id="introGo">Continue</button>
+    </div>
+  </div>
+</div>
+<script>
+(() => {
+  // Settings come after "#" so they never reach the server that hosts this page.
+  const params = new URLSearchParams(location.hash.slice(1) || location.search);
+  history.replaceState(null, '', location.pathname); // keep the code out of history and screenshots
+  const code = params.get('code') || '';
+  // The Twenty server to send cards to, for example https://crm.example.com
+  const api = (params.get('api') || '').replace(/\/+$/, '');
+  const $ = (id) => document.getElementById(id);
+  const video = $('video'), msg = $('msg'), toast = $('toast');
+  const MAX_EDGE = 1600;
+  let sent = 0, failed = 0, pending = 0, queue = Promise.resolve();
+  let current = null; // { front: Blob, frontUrl, back?: Blob, backUrl? }
+
+  const showMsg = (text) => { msg.textContent = text; msg.hidden = false; };
+  const say = (text) => { toast.textContent = text; toast.classList.add('on'); clearTimeout(say.t); say.t = setTimeout(() => toast.classList.remove('on'), 1800); };
+  const updateCount = () => {
+    const parts = [];
+    if (sent) parts.push(sent + ' sent to Twenty');
+    if (pending) parts.push(pending + ' uploading');
+    if (failed) parts.push(failed + ' failed');
+    $('count').textContent = parts.join(' · ');
+  };
+
+  const renderCurrent = () => {
+    const box = $('current'); box.innerHTML = '';
+    if (!current) { $('back').disabled = true; $('back').textContent = 'Add back'; return; }
+    for (const [side, url] of [['front', current.frontUrl], ['back', current.backUrl]]) {
+      if (!url) continue;
+      const t = document.createElement('div'); t.className = 'thumb held'; // held: not sent yet, the back can still be added
+      const img = document.createElement('img'); img.src = url; img.alt = 'Card ' + side;
+      const s = document.createElement('span'); s.textContent = side === 'front' ? 'F' : 'B';
+      t.append(img, s); box.append(t);
+    }
+    $('back').disabled = !!current.back || wantBack;
+    $('back').textContent = wantBack ? 'Flip the card' : 'Add back';
+  };
+
+  // Where the on-screen frame sits in the video's own pixels (the video is shown with object-fit: cover).
+  const frameInVideo = () => {
+    const vw = video.videoWidth, vh = video.videoHeight;
+    const box = video.getBoundingClientRect(), fr = document.querySelector('.frame').getBoundingClientRect();
+    const scale = Math.max(box.width / vw, box.height / vh);
+    const offX = (vw * scale - box.width) / 2, offY = (vh * scale - box.height) / 2;
+    const margin = 0.06; // keep a little around the card so an edge never gets cut
+    const fx = (fr.left - box.left + offX) / scale, fy = (fr.top - box.top + offY) / scale;
+    const fw = fr.width / scale, fh = fr.height / scale;
+    const x = Math.max(0, fx - fw * margin), y = Math.max(0, fy - fh * margin);
+    return { x, y, w: Math.min(vw - x, fw * (1 + 2 * margin)), h: Math.min(vh - y, fh * (1 + 2 * margin)) };
+  };
+
+  // Auto-levels: stretch the 1st..99th brightness percentiles to full range. Fixes dim or washed-out shots.
+  const autoLevels = (ctx, w, h) => {
+    const img = ctx.getImageData(0, 0, w, h), d = img.data, hist = new Uint32Array(256);
+    for (let i = 0; i < d.length; i += 16) hist[(d[i] * 77 + d[i + 1] * 150 + d[i + 2] * 29) >> 8]++;
+    const total = hist.reduce((a, b) => a + b, 0);
+    let lo = 0, hi = 255, acc = 0;
+    while (lo < 255 && (acc += hist[lo]) < total * 0.01) lo++;
+    acc = 0; while (hi > 0 && (acc += hist[hi]) < total * 0.01) hi--;
+    if (hi - lo < 40 || (lo < 8 && hi > 247)) return; // already fine, or too flat to stretch safely
+    const k = 255 / (hi - lo);
+    for (let i = 0; i < d.length; i += 4) {
+      d[i] = Math.max(0, Math.min(255, (d[i] - lo) * k));
+      d[i + 1] = Math.max(0, Math.min(255, (d[i + 1] - lo) * k));
+      d[i + 2] = Math.max(0, Math.min(255, (d[i + 2] - lo) * k));
+    }
+    ctx.putImageData(img, 0, 0);
+  };
+
+  const grab = () => new Promise((resolve, reject) => {
+    if (!video.videoWidth || !video.videoHeight) return reject(new Error('Camera not ready'));
+    const r = frameInVideo();
+    const scale = Math.min(1, MAX_EDGE / Math.max(r.w, r.h));
+    const c = document.createElement('canvas');
+    c.width = Math.round(r.w * scale); c.height = Math.round(r.h * scale);
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(video, r.x, r.y, r.w, r.h, 0, 0, c.width, c.height);
+    try { autoLevels(ctx, c.width, c.height); } catch {}
+    c.toBlob((b) => b ? resolve(b) : reject(new Error('Could not take the photo')), 'image/jpeg', 0.88);
+  });
+
+  const flash = () => { const f = $('flash'); f.classList.add('on'); requestAnimationFrame(() => requestAnimationFrame(() => f.classList.remove('on'))); };
+
+  const toBase64 = (blob) => new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(',')[1]);
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(blob);
+  });
+
+  const send = (card) => {
+    pending++; updateCount();
+    queue = queue.then(async () => {
+     try {
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          if (!aiAvailable && card.ocrText === undefined) card.ocrText = await readOnPhone(card);
+          const body = { code, lists: [...selected], front: await toBase64(card.front) };
+          if (card.ocrText) body.ocrText = card.ocrText;
+          if (card.back) body.back = await toBase64(card.back);
+          const res = await fetch(api + '/s/cards/upload', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify(body) });
+          const data = await res.json().catch(() => ({}));
+          if (res.status === 401) { showMsg('This camera link has expired. Open the camera again from Scan business cards in Twenty.'); return; }
+          if (!res.ok || !data.success) throw new Error(data.error || ('HTTP ' + res.status));
+          sent++; updateCount();
+          URL.revokeObjectURL(card.frontUrl); if (card.backUrl) URL.revokeObjectURL(card.backUrl);
+          return;
+        } catch (error) {
+          if (attempt === 3) { failed++; updateCount(); say('A card failed to upload: ' + error.message); }
+          else await new Promise((r) => setTimeout(r, 1500 * attempt));
+        }
+      }
+     } finally { pending--; updateCount(); }
+    });
+  };
+
+  const commitCurrent = () => { if (current) { send(current); current = null; renderCurrent(); } };
+
+  // Taking a card: the first shot of a card is its front; "Add back" makes the next shot its back.
+  let wantBack = false;
+
+  const takeFront = async () => {
+    const blob = await grab(); flash(); click();
+    commitCurrent();
+    current = { front: blob, frontUrl: URL.createObjectURL(blob) };
+    renderCurrent();
+    $('hint').textContent = auto ? 'Next card, or tap Add back and flip it' : 'Flip it and tap Add back, or show the next card';
+  };
+
+  const takeBack = async () => {
+    const blob = await grab(); flash(); click();
+    current.back = blob; current.backUrl = URL.createObjectURL(blob);
+    wantBack = false; renderCurrent(); say('Back side added');
+    $('hint').textContent = 'Lay the next card in the frame';
+  };
+
+  const take = async () => {
+    try { if (wantBack && current && !current.back) await takeBack(); else await takeFront(); }
+    catch (error) { say(error.message); }
+  };
+
+  $('shutter').addEventListener('click', take);
+
+  $('back').addEventListener('click', async () => {
+    if (!current || current.back) return;
+    if (auto) {
+      wantBack = true; $('back').textContent = 'Flip the card'; $('back').disabled = true;
+      $('hint').textContent = 'Flip the card. The back is taken by itself';
+      armed = true; return;
+    }
+    try { await takeBack(); } catch (error) { say(error.message); }
+  });
+
+  // ---- Auto capture: no model, just a few cheap checks on a tiny copy of the frame, about 7 times a second.
+  // A card is taken when the frame is sharp, holds still for about half a second, has detail like a card,
+  // and differs clearly from the last card taken (so the same card is never taken twice).
+  let auto = false, armed = true, still = 0, prev = null, lastShot = null, lastEnergy = 0;
+  const SW = 96, SH = 56, sample = document.createElement('canvas');
+  sample.width = SW; sample.height = SH;
+  const sctx = sample.getContext('2d', { willReadFrequently: true });
+
+  const tiny = () => {
+    const r = frameInVideo();
+    sctx.drawImage(video, r.x, r.y, r.w, r.h, 0, 0, SW, SH);
+    const d = sctx.getImageData(0, 0, SW, SH).data, g = new Float32Array(SW * SH);
+    for (let i = 0, j = 0; i < d.length; i += 4, j++) g[j] = d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114;
+    return g;
+  };
+  const diff = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) s += Math.abs(a[i] - b[i]); return s / a.length; };
+  // Edge energy: how much fine detail (text, lines) there is. Also tells sharp from blurred.
+  const energy = (g) => {
+    let s = 0;
+    for (let y = 1; y < SH - 1; y++) for (let x = 1; x < SW - 1; x++) {
+      const i = y * SW + x; s += Math.abs(4 * g[i] - g[i - 1] - g[i + 1] - g[i - SW] - g[i + SW]);
+    }
+    return s / ((SW - 2) * (SH - 2));
+  };
+
+  // A card shows as a brightness step between the card and the ring just outside the frame
+  // (the sample keeps a margin around the frame). An empty table has no such step.
+  const edgeStep = (g) => {
+    const ring = 3, inset = 10; let o = 0, on = 0, c = 0, cn = 0;
+    for (let y = 0; y < SH; y++) for (let x = 0; x < SW; x++) {
+      const v = g[y * SW + x];
+      if (x < ring || y < ring || x >= SW - ring || y >= SH - ring) { o += v; on++; }
+      else if (x > inset && y > inset && x < SW - inset && y < SH - inset) { c += v; cn++; }
+    }
+    return Math.abs(c / cn - o / on);
+  };
+
+  const setFrame = (state) => {
+    const f = document.querySelector('.frame');
+    f.classList.toggle('steady', state === 'steady'); f.classList.toggle('ready', state === 'ready');
+  };
+
+  let busy = false;
+  const tick = async () => {
+    if (!auto || busy || !video.videoWidth || $('shutter').disabled) { setFrame(''); return; }
+    const g = tiny(), e = energy(g);
+    const motion = prev ? diff(g, prev) : 99; prev = g;
+    still = motion < 2.2 ? still + 1 : 0;
+    if (!armed && lastShot && diff(g, lastShot) > 14) armed = true; // the scene changed: a new card (or the back)
+    const looksLikeCard = e > 4 && edgeStep(g) > 12 && (!lastEnergy || e > lastEnergy * 0.45);
+    setFrame(armed && looksLikeCard ? (still >= 2 ? 'ready' : 'steady') : '');
+    if (armed && looksLikeCard && still >= 4) {
+      busy = true; armed = false; still = 0; lastShot = g; lastEnergy = e;
+      await take();
+      busy = false;
+    }
+  };
+  setInterval(() => { tick().catch(() => { busy = false; }); }, 140);
+
+  $('mode').addEventListener('click', () => {
+    auto = !auto; armed = true; wantBack = false;
+    $('mode').classList.toggle('on', auto); $('mode').setAttribute('aria-pressed', String(auto));
+    $('mode').textContent = auto ? 'Auto on' : 'Auto off';
+    $('hint').textContent = auto ? 'Hold the card inside the frame. It is taken when sharp and still' : 'Hold the card inside the frame';
+    renderCurrent(); setFrame('');
+  });
+
+  // A short click sound and, where supported (Android), a tiny buzz.
+  let audio = null;
+  const unlockAudio = () => { try { audio = audio || new (window.AudioContext || window.webkitAudioContext)(); audio.resume(); } catch {} };
+  document.addEventListener('pointerdown', unlockAudio, { once: true });
+  const click = () => {
+    try { navigator.vibrate?.(30); } catch {}
+    if (!audio) return;
+    const o = audio.createOscillator(), v = audio.createGain();
+    o.frequency.value = 1800; v.gain.setValueAtTime(0.08, audio.currentTime); v.gain.exponentialRampToValueAtTime(0.0001, audio.currentTime + 0.06);
+    o.connect(v).connect(audio.destination); o.start(); o.stop(audio.currentTime + 0.07);
+  };
+
+  $('done').addEventListener('click', async () => {
+    commitCurrent();
+    $('done').disabled = true; $('shutter').disabled = true;
+    say('Finishing uploads');
+    await queue;
+    (video.srcObject?.getTracks() || []).forEach((t) => t.stop());
+    showMsg(sent ? (sent + (sent === 1 ? ' card' : ' cards') + ' sent to Twenty' + (failed ? ', ' + failed + ' failed' : '') +
+      '. They are being read now. Review them in Twenty under Scanned cards. You can close this tab.')
+      : 'No cards were sent. You can close this tab.');
+  });
+
+  window.addEventListener('pagehide', () => { if (current) commitCurrent(); });
+
+  // Explain the camera prompt (it names this page's own site, not Twenty) before it appears.
+  const INTRO_KEY = 'card-scan-camera-intro-seen';
+  let introSeenInTwenty = false;
+  const explain = () => new Promise((resolve) => {
+    let seen = introSeenInTwenty;
+    try { seen = seen || localStorage.getItem(INTRO_KEY) === '1'; } catch {}
+    if (seen) return resolve();
+    try { $('introApi').textContent = new URL(api).host; } catch { $('introApi').textContent = 'your Twenty'; }
+    $('introHost').textContent = location.host;
+    $('intro').hidden = false;
+    const go = (remember) => {
+      if (remember) {
+        try { localStorage.setItem(INTRO_KEY, '1'); } catch {}
+        // Also saved in Twenty for this person, so another browser or a cleared one remembers too.
+        fetch(api + '/s/cards/intro-seen', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ code }) }).catch(() => {});
+      }
+      unlockAudio(); $('intro').hidden = true; resolve();
+    };
+    $('introGo').addEventListener('click', () => go(false), { once: true });
+    $('introNever').addEventListener('click', () => go(true), { once: true });
+  });
+
+  // ---- Lists: tap to put every card on one or more Twenty lists.
+  let known = [], selected = new Set();
+  const svgTick = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="m5 12 5 5 9-10"/></svg>';
+  const addKnown = (name) => { if (name && !known.some((k) => k.toLowerCase() === name.toLowerCase())) known.push(name); };
+  const toggle = (name) => { const hit = [...selected].find((s) => s.toLowerCase() === name.toLowerCase()); hit ? selected.delete(hit) : selected.add(name); renderChips(); };
+  const renderChips = () => {
+    const box = $('chips'); box.innerHTML = '';
+    const names = [...selected, ...known.filter((k) => ![...selected].some((s) => s.toLowerCase() === k.toLowerCase()))].slice(0, 8);
+    for (const name of names) {
+      const b = document.createElement('button'); b.className = 'chip'; b.type = 'button';
+      const on = selected.has(name); b.setAttribute('aria-pressed', String(on));
+      b.innerHTML = on ? svgTick : ''; b.append(name);
+      b.addEventListener('click', () => toggle(name)); box.append(b);
+    }
+    if (!names.length) {
+      const b = document.createElement('button'); b.className = 'chip add'; b.type = 'button'; b.textContent = 'Add to a list';
+      b.addEventListener('click', openLists); box.append(b);
+    }
+    renderOptions();
+  };
+  const renderOptions = () => {
+    const q = $('listSearch').value.trim(), box = $('listOptions'); box.innerHTML = '';
+    const row = (label, name, isNew) => {
+      const b = document.createElement('button'); b.className = 'option'; b.type = 'button'; b.setAttribute('role', 'option');
+      b.setAttribute('aria-selected', String(!isNew && selected.has(name)));
+      const span = document.createElement('span'); span.textContent = label; b.append(span);
+      b.insertAdjacentHTML('beforeend', '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#8da2fb" stroke-width="2.5" aria-hidden="true"><path d="m5 12 5 5 9-10"/></svg>');
+      b.addEventListener('click', () => { if (isNew) { addKnown(name); selected.add(name); $('listSearch').value = ''; } else toggle(name); renderChips(); });
+      box.append(b);
+    };
+    const matches = known.filter((k) => k.toLowerCase().includes(q.toLowerCase()));
+    if (q && !known.some((k) => k.toLowerCase() === q.toLowerCase())) row('New list: ' + q, q.slice(0, 200), true);
+    for (const name of matches) row(name, name, false);
+    const n = selected.size;
+    $('listFooter').textContent = n === 0 ? 'No list picked. Cards still go to Twenty.' : n === 1 ? 'Every card you scan goes on this list.' : n + ' lists. Every card you scan goes on all of them.';
+  };
+  const openLists = () => { $('listSearch').value = ''; renderOptions(); $('listSheet').hidden = false; };
+  $('allLists').addEventListener('click', openLists);
+  $('listSearch').addEventListener('input', renderOptions);
+  $('listDone').addEventListener('click', () => { $('listSheet').hidden = true; });
+  $('listSheet').addEventListener('click', (e) => { if (e.target === $('listSheet')) $('listSheet').hidden = true; });
+
+  // ---- OCR only: with no AI model in this CRM, the card's text is read on this phone.
+  let aiAvailable = true, ocrWorker = null;
+  const loadScript = (src) => new Promise((resolve, reject) => { const el = document.createElement('script'); el.src = src; el.onload = resolve; el.onerror = reject; document.head.append(el); });
+  const getOcr = async () => {
+    if (!ocrWorker) ocrWorker = (async () => {
+      await loadScript('https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js');
+      return window.Tesseract.createWorker('eng');
+    })();
+    return ocrWorker;
+  };
+  const readOnPhone = async (card) => {
+    try {
+      const worker = await getOcr(); let text = '';
+      for (const blob of [card.front, card.back].filter(Boolean)) text += (await worker.recognize(blob)).data.text + '\n';
+      return text.trim();
+    } catch { return ''; }
+  };
+  $('ocrPill').addEventListener('click', () => { $('ocrSheet').hidden = false; });
+  $('ocrOk').addEventListener('click', () => { $('ocrSheet').hidden = true; });
+  $('ocrSheet').addEventListener('click', (e) => { if (e.target === $('ocrSheet')) $('ocrSheet').hidden = true; });
+
+  // ---- Camera: back camera first; switch and zoom only when this phone offers them.
+  let facing = 'environment';
+  const openCamera = async () => {
+    (video.srcObject?.getTracks() || []).forEach((t) => t.stop());
+    video.srcObject = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: { facingMode: { ideal: facing }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+    });
+    setupZoom();
+    try { $('flip').hidden = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput').length < 2; } catch {}
+  };
+  const setupZoom = () => {
+    const box = $('zoom'); box.innerHTML = ''; box.hidden = true;
+    const track = video.srcObject?.getVideoTracks()[0];
+    const caps = track?.getCapabilities?.() || {};
+    if (!caps.zoom || !(caps.zoom.max > caps.zoom.min)) return;
+    const levels = [1, 2, 3].filter((z) => z >= caps.zoom.min && z <= caps.zoom.max);
+    if (levels.length < 2) return;
+    const current = track.getSettings?.().zoom || levels[0];
+    for (const z of levels) {
+      const b = document.createElement('button'); b.type = 'button'; b.textContent = z + '×';
+      b.setAttribute('aria-pressed', String(z === current)); b.setAttribute('aria-label', 'Zoom ' + z + ' times');
+      b.addEventListener('click', async () => {
+        try { await track.applyConstraints({ advanced: [{ zoom: z }] }); [...box.children].forEach((c) => c.setAttribute('aria-pressed', String(c === b))); } catch {}
+      });
+      box.append(b);
+    }
+    box.hidden = false;
+  };
+  $('flip').addEventListener('click', async () => {
+    facing = facing === 'environment' ? 'user' : 'environment';
+    try { await openCamera(); } catch (error) { say('Could not switch camera'); }
+  });
+
+  const start = async () => {
+    if (!/^[0-9a-f]{64}$/.test(code) || !/^https:\/\/[^/]+$/.test(api)) { showMsg('Open the camera from Scan business cards in Twenty.'); return; }
+    try {
+      const res = await fetch(api + '/s/cards/session?code=' + encodeURIComponent(code));
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) { showMsg('This camera link has expired. Open the camera again from Scan business cards in Twenty.'); return; }
+      for (const name of String(data.collectedAt || '').split(';').map((n) => n.trim()).filter(Boolean)) { addKnown(name); selected.add(name); }
+      for (const name of Array.isArray(data.recentLists) ? data.recentLists : []) addKnown(String(name));
+      renderChips();
+      aiAvailable = data.aiAvailable !== false;
+      introSeenInTwenty = data.introSeen === true;
+      $('ocrPill').hidden = aiAvailable;
+      if (!aiAvailable) getOcr().catch(() => say('Could not load OCR. Check your connection'));
+    } catch { showMsg('Could not reach Twenty. Check your connection and reload.'); return; }
+    await explain();
+    if (!navigator.mediaDevices?.getUserMedia) { showMsg('This browser cannot use the camera here. Use Take photo in Twenty instead.'); return; }
+    try { await openCamera(); }
+    catch (error) {
+      showMsg('Camera access was refused (' + (error.name || 'error') + '). Allow the camera for this site and reload.');
+    }
+  };
+
+  updateCount(); renderCurrent(); start();
+})();
+</script>
+</body>
+</html>
